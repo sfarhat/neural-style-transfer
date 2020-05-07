@@ -184,45 +184,6 @@ def style_loss(style_layers, generated_out, style_out, layer_weights):
         layer_expectations.append(normalized_difference)
     return sum(layer_expectations)
 
-def style_transfer(content_im, style_im):
-    
-    # Preprocessing of inputs
-    shape = content_im.shape
-
-    generated_im = torch.randn([1, 3, shape[0], shape[1]], requires_grad=True)
-    content_im = preprocess(content_im, shape)
-    style_im = preprocess(style_im, shape)
-    
-    def closure():
-    
-        # For LBFGS, closure cannot take any arguments, so make this a HOF wrapped by another func
-        # with generated_im, content_out, and style_out defined there
-
-        generated_out = net(generated_im)
-
-        closs = content_loss(content_layers, generated_out, content_out)
-        sloss = style_loss(style_layers, generated_out, style_out, layer_weights)
-
-        loss = content_weight * closs + style_weight + sloss
-
-        closs.backward()
-        sloss.backward()
-
-        return loss
-    
-    net = StyleTransferNet()
-    optimizer = LBFGS([generated_im])
-    
-    content_out = net(content_im)
-    style_out = net(style_im)
-    
-    for _ in torch.arange(500):
-        optimizer.zero_grad()
-        generated_out = net(generated_im)
-        optimizer.step(closure)
-        
-    return generated_im
-
 def closure():
 
   optimizer.zero_grad()
@@ -247,18 +208,18 @@ def closure():
 
 def save_im(generated_im):
 
-	result = generated_im.detach().cpu().squeeze(0).data
-	# np_im = print_im.numpy().T
+    result = generated_im.detach().cpu().squeeze(0).data
+    # np_im = print_im.numpy().T
 
-	# mean_vec = np.mean(np_im, axis=(0,1))
-	# std_vec = np.std(np_im, axis=(0,1))
-	# transform = transforms.Normalize(mean=mean_vec, std=std_vec)
-	# result = transform(print_im)
+    # mean_vec = np.mean(np_im, axis=(0,1))
+    # std_vec = np.std(np_im, axis=(0,1))
+    # transform = transforms.Normalize(mean=mean_vec, std=std_vec)
+    # result = transform(print_im)
 
-	# print_im = result.numpy().T
-	# result = (print_im - np.min(print_im))/np.ptp(print_im)
+    # print_im = result.numpy().T
+    # result = (print_im - np.min(print_im))/np.ptp(print_im)
 
-	utils.save_image(result, "result.jpg")
+    utils.save_image(result, "result.jpg")
 
 layer_names = ["conv1_1", "conv1_2", 
                "conv2_1", "conv2_2", 
@@ -280,38 +241,38 @@ style_weight = 10000
 
 def main():
 
-	if torch.cuda.is_available():
-	  device = torch.device("cuda")
-	  tensor_type = torch.cuda.FloatTensor
-	else:
-	  device = torch.device("cpu")
-	  tensor_type = torch.FloatTensor
+    if torch.cuda.is_available():
+      device = torch.device("cuda")
+      tensor_type = torch.cuda.FloatTensor
+    else:
+      device = torch.device("cpu")
+      tensor_type = torch.FloatTensor
 
-	content_im = skio.imread("neckarfront.jpg")
-	style_im = skio.imread("starry_night.jpg")
+    content_im = skio.imread("neckarfront.jpg")
+    style_im = skio.imread("starry_night.jpg")
 
-	# Preprocessing of inputs
-	shape = content_im.shape
+    # Preprocessing of inputs
+    shape = content_im.shape
 
-	content_im = preprocess(content_im, shape)
-	style_im = preprocess(style_im, shape)
+    content_im = preprocess(content_im, shape)
+    style_im = preprocess(style_im, shape)
 
-	generated_im = torch.randn([1, 3, shape[0], shape[1]]).type(tensor_type).requires_grad_(True)
-	# generated_im = content_im.clone().requires_grad_(True)
+    generated_im = torch.randn([1, 3, shape[0], shape[1]]).type(tensor_type).requires_grad_(True)
+    # generated_im = content_im.clone().requires_grad_(True)
 
-	generated_im.to(device)
-	content_im.to(device)
-	style_im.to(device)
+    generated_im.to(device)
+    content_im.to(device)
+    style_im.to(device)
 
-	net = StyleTransferNet()
-	net.to(device)
-	optimizer = LBFGS([generated_im])
+    net = StyleTransferNet()
+    net.to(device)
+    optimizer = LBFGS([generated_im])
 
-	content_out = net(content_im)
-	style_out = net(style_im)
+    content_out = net(content_im)
+    style_out = net(style_im)
 
-	for i in range(300):
-  		optimizer.step(closure)
+    for i in range(300):
+        optimizer.step(closure)
 
-  	save_im(generated_im)
+    save_im(generated_im)
 
