@@ -19,6 +19,31 @@ import torch.nn as nn
 from torch.autograd import Variable
 from torch.optim import LBFGS, SGD
 
+if torch.cuda.is_available():
+      device = torch.device("cuda")
+      tensor_type = torch.cuda.FloatTensor
+    else:
+      device = torch.device("cpu")
+      tensor_type = torch.FloatTensor
+
+layer_names = ["conv1_1", "conv1_2", 
+               "conv2_1", "conv2_2", 
+               "conv3_1", "conv3_2", "conv3_3", "conv3_4", 
+               "conv4_1", "conv4_2", "conv4_3", "conv4_4", 
+               "conv5_1", "conv5_2", "conv5_3", "conv5_4"]
+
+# This will allow us to index into the convolutional layer outputs of the network by name, as done in the paper
+layers = {layer_names[i]: i for i in torch.arange(len(layer_names))}
+
+content_layers = ["conv4_2"]
+style_layers = ["conv1_1", "conv2_1", "conv3_1", "conv4_1", "conv5_1"]
+
+layer_weights = [0.2, 0.2, 0.2, 0.2, 0.2]
+
+# Gatys suggests ratio of 1000:1 or 10000:1
+content_weight = 1
+style_weight = 10000
+
 class StyleTransferNet(torch.nn.Module):
     
     def __init__(self):
@@ -184,28 +209,6 @@ def style_loss(style_layers, generated_out, style_out, layer_weights):
         layer_expectations.append(normalized_difference)
     return sum(layer_expectations)
 
-def closure():
-
-  optimizer.zero_grad()
-  generated_out = net(generated)
-    
-  # For LBFGS, closure cannot take any arguments, so make this a HOF wrapped by another func
-  # with generated_im, content_out, and style_out defined there
-
-  closs = content_loss(content_layers, generated_out, content_out)
-  sloss = style_loss(style_layers, generated_out, style_out, layer_weights)
-
-  loss = content_weight * closs + style_weight + sloss
-
-  print("Step %s: %s" % (i, loss.cpu().item()))
-
-  # print(closs, sloss, loss)
-
-  closs.backward(retain_graph=True)
-  sloss.backward(retain_graph=True)
-
-  return loss
-
 def save_im(generated_im):
 
     result = generated_im.detach().cpu().squeeze(0).data
@@ -221,32 +224,7 @@ def save_im(generated_im):
 
     utils.save_image(result, "result.jpg")
 
-layer_names = ["conv1_1", "conv1_2", 
-               "conv2_1", "conv2_2", 
-               "conv3_1", "conv3_2", "conv3_3", "conv3_4", 
-               "conv4_1", "conv4_2", "conv4_3", "conv4_4", 
-               "conv5_1", "conv5_2", "conv5_3", "conv5_4"]
-
-# This will allow us to index into the convolutional layer outputs of the network by name, as done in the paper
-layers = {layer_names[i]: i for i in torch.arange(len(layer_names))}
-
-content_layers = ["conv4_2"]
-style_layers = ["conv1_1", "conv2_1", "conv3_1", "conv4_1", "conv5_1"]
-
-layer_weights = [0.2, 0.2, 0.2, 0.2, 0.2]
-
-# Gatys suggests ratio of 1000:1 or 10000:1
-content_weight = 1
-style_weight = 10000
-
 def main():
-
-    if torch.cuda.is_available():
-      device = torch.device("cuda")
-      tensor_type = torch.cuda.FloatTensor
-    else:
-      device = torch.device("cpu")
-      tensor_type = torch.FloatTensor
 
     content_im = skio.imread("neckarfront.jpg")
     style_im = skio.imread("starry_night.jpg")
@@ -271,7 +249,29 @@ def main():
     content_out = net(content_im)
     style_out = net(style_im)
 
-    for i in range(300):
+    def closure():
+
+      optimizer.zero_grad()
+      generated_out = net(generated)
+        
+      # For LBFGS, closure cannot take any arguments, so make this a HOF wrapped by another func
+      # with generated_im, content_out, and style_out defined there
+
+      closs = content_loss(content_layers, generated_out, content_out)
+      sloss = style_loss(style_layers, generated_out, style_out, layer_weights)
+
+      loss = content_weight * closs + style_weight + sloss
+
+      print("Step %s: %s" % (i, loss.cpu().item()))
+
+      # print(closs, sloss, loss)
+
+      closs.backward(retain_graph=True)
+      sloss.backward(retain_graph=True)
+
+      return loss
+
+    for i in range(500):
         optimizer.step(closure)
 
     save_im(generated_im)
