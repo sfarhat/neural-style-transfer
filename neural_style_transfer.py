@@ -17,32 +17,7 @@ import torch
 from torchvision import models, transforms, utils
 import torch.nn as nn
 from torch.autograd import Variable
-from torch.optim import LBFGS, SGD
-
-if torch.cuda.is_available():
-      device = torch.device("cuda")
-      tensor_type = torch.cuda.FloatTensor
-    else:
-      device = torch.device("cpu")
-      tensor_type = torch.FloatTensor
-
-layer_names = ["conv1_1", "conv1_2", 
-               "conv2_1", "conv2_2", 
-               "conv3_1", "conv3_2", "conv3_3", "conv3_4", 
-               "conv4_1", "conv4_2", "conv4_3", "conv4_4", 
-               "conv5_1", "conv5_2", "conv5_3", "conv5_4"]
-
-# This will allow us to index into the convolutional layer outputs of the network by name, as done in the paper
-layers = {layer_names[i]: i for i in torch.arange(len(layer_names))}
-
-content_layers = ["conv4_2"]
-style_layers = ["conv1_1", "conv2_1", "conv3_1", "conv4_1", "conv5_1"]
-
-layer_weights = [0.2, 0.2, 0.2, 0.2, 0.2]
-
-# Gatys suggests ratio of 1000:1 or 10000:1
-content_weight = 1
-style_weight = 10000
+import torch.optim
 
 class StyleTransferNet(torch.nn.Module):
     
@@ -107,39 +82,37 @@ def content_loss(content_layers, generated_out, content_out):
      [Output of 2nd filter in layer],
      ...]
 
-    These are already given to us in the layer outputs of the parameters.
+    These are already given to us in the layer outputs of the parameters, and its
+    dimensions are N x M.
     
     The content loss is the Sum of Squared Distances between P and F. This is
     mathematically equivalent to taking the Frobenius norm of P - F, without needing
     to flatten anything. This is becuase the Frobenius norm is row blind, i.e. 
     regardless if we flatten anything, it will just take the overall sum
     of all the squared entries.
+
+    In practice, I used the Mean Squared Error of (P - F)^2, as it is an unbiased estimator.
+
+    Loss = (1 / (2 * N * M)) * mean((P-F)^2)
     
     Note: Turns out stacking tensors into a list then converting that into a tensor
     is a pain. So, instead, I just utilized the fact the we are only using one layer
     in practice and just stick with that layer.
     """
 
-    # desired_layers = [layers[l] for l in content_layers]
-    # errors = []
+    desired_layers = [layers[l] for l in content_layers]
+    errors = []
     
-    # for l in desired_layers:
+    for l in desired_layers:
         
-    #     content_layer, generated_layer = content_out[l], generated_out[l]
-    #     diff = torch.norm(content_layer - generated_layer)**2
-    #     errors.append(0.5 * diff)
+        content_layer, generated_layer = content_out[l], generated_out[l]
+        diff = torch.mean((content_layer - generated_layer)**2)
+        errors.append(0.5 * diff)
 
-    # error = sum(errors)
+    error = sum(errors)
     
-    # # Using python sum over torch.sum fixed autodiff things for some reason
-    # return error
-
-    wanted_layers = [layers[l] for l in content_layers]
-    differences = []
-    for i in wanted_layers:
-        content, target = content_out[i], generated_out[i]
-        differences.append(torch.mean((content - target)**2))
-    return sum(differences)
+    # Using python sum over torch.sum fixed autodiff things for some reason
+    return error
 
 def style_loss(style_layers, generated_out, style_out, layer_weights):
     
@@ -150,129 +123,141 @@ def style_loss(style_layers, generated_out, style_out, layer_weights):
     [[Inner product of 1st filter output with itself, Inner product of 1st filter output with 2nd filter output, ...],
      [Inner product of 2st filter output with 1st filter output, Inner product of 2nd filter output with itself, ...],
      ...]
+
+    The dimensions of this matrix are N x N.
      
     Similar to content loss, we define two matrices, G and A, for the generated and style image respectively.
-    Then, the style loss it Mean Squared Error between G and A. This time, we can't leverage the same
-    structure as before, so we first need to create a matrix where each row is the flattened filter output,
-    then take the inner product of this and its transpose. (If you wanted to use the Frobenius norm, you would
-    need to compute it individually for ever combination of filters, which is tedious).
+    Then, the style loss it Mean Squared Error between G and A. This time, when constructing G and A, we can't 
+    leverage the same structure as before, so we first need to create a matrix where each row is the flattened 
+    filter output, then take the inner product of this and its transpose. (If you wanted to use the Frobenius 
+    norm, you would need to compute it individually for ever combination of filters, which is tedious).
     
     This is actually just the same as finding the covariance matrix where the features are the filters outputs.
     
-    Next, we need to normalize by a factor of 1 / (number of filters in layer)^2 * (size of filter output)^2
+    Loss = (1 / (4 * N * M)) * mean((A-G)^2)
     
     Finally, since this is computed across layers, we take a weighted average of these quantities. In the
     paper, they suggest using a uniform distribution of weights.
+
     """
     
-    # Shape of layer outputs are (1, num_filters, y, x)
+    # Shape of layer outputs are (1, N, y, x)
     
-    # desired_layers = [layers[l] for l in style_layers]
-    # errors = []
+    desired_layers = [layers[l] for l in style_layers]
+    errors = []
     
-    # for l in desired_layers:
+    for l in desired_layers:
         
-    #     style_layer, generated_layer = style_out[l], generated_out[l]
-    #     _, N, y, x = style_layer.shape
-    #     M = y * x
-        
-    #     style_feature_matrix = style_layer.squeeze().view(N, M)
-    #     generated_feature_matrix = generated_layer.squeeze().view(N, M)
-        
-    #     A = style_feature_matrix @ style_feature_matrix.T
-    #     G = generated_feature_matrix @ generated_feature_matrix.T
-        
-    #     # mse = torch.norm(A - G)**2 / (4 * N**2 * M**2)
-    #     # Taking the mean automatically adds everything up and divides it by N * M
-    #     mse = torch.mean((A - G)**2) / (4 * N * M)
-    #     errors.append(mse)
-
-    # error = sum([layer_weights[i] * errors[i] for i in torch.arange(len(errors))])
-        
-    # return error
-
-    wanted_layers = [layers[l] for l in style_layers]
-    layer_expectations = []
-    for l in wanted_layers:
-        style_layer = style_out[l]
-        target_layer = generated_out[l]
-        _, N, y, x = style_layer.data.size()
+        style_layer, generated_layer = style_out[l], generated_out[l]
+        _, N, y, x = style_layer.shape
         M = y * x
-        style_layer = style_layer.view(N, M)
-        target_layer = target_layer.view(N, M)
-        # compute the Gram matrices - the auto-correlation of each filter activation
-        G_s = torch.mm(style_layer, style_layer.t())
-        G_t = torch.mm(target_layer, target_layer.t())
-        # MSE of differences between the Gram matrices
-        difference = torch.mean(((G_s - G_t) ** 2)/(M*N*2))
-        normalized_difference = 0.2*(difference)
-        layer_expectations.append(normalized_difference)
-    return sum(layer_expectations)
+        
+        style_feature_matrix = style_layer.squeeze().view(N, M)
+        generated_feature_matrix = generated_layer.squeeze().view(N, M)
+        
+        A = style_feature_matrix @ style_feature_matrix.t()
+        G = generated_feature_matrix @ generated_feature_matrix.t()
+        # Taking the mean automatically adds everything up and divides it by N * M
+        mse = (torch.mean((A - G)**2)) / (4 * N * M)
+        errors.append(mse)
 
-def save_im(generated_im):
+    weighted_errors = [layer_weights[i] * errors[i] for i in torch.arange(len(errors))]
 
-    result = generated_im.detach().cpu().squeeze(0).data
-    # np_im = print_im.numpy().T
+    error = sum(weighted_errors)
+        
+    return error
 
-    # mean_vec = np.mean(np_im, axis=(0,1))
-    # std_vec = np.std(np_im, axis=(0,1))
-    # transform = transforms.Normalize(mean=mean_vec, std=std_vec)
-    # result = transform(print_im)
+def style_transfer(content_im, style_im):
 
-    # print_im = result.numpy().T
-    # result = (print_im - np.min(print_im))/np.ptp(print_im)
+  def closure():
 
-    utils.save_image(result, "result.jpg")
+    generated_out = net(generated_im)
+    optimizer.zero_grad()
+      
+    # For LBFGS, closure cannot take any arguments, so make this a HOF wrapped by another func
+    # with generated_im, content_out, and style_out defined there
+
+    closs = content_loss(content_layers, generated_out, content_out)
+    sloss = style_loss(style_layers, generated_out, style_out, layer_weights)
+
+    loss = content_weight * closs + style_weight + sloss
+
+    print("Step %s: %s" % (i, loss.cpu().item()))
+
+    loss.backward(retain_graph=True)
+
+    return loss
+
+  # Preprocessing of inputs
+  # If content image too big (> 1000 in any dim), resize here instead of manually
+  while content_im.shape[0] > 1000 or content_im.shape[1] > 1000:
+    down_sampled = (content_im.shape[0] // 2, content_im.shape[1] // 2, 3)
+    content_im = sk.transform.resize(content_im, down_sampled)
+
+  shape = content_im.shape
+
+  content_im = preprocess(content_im, shape)
+  style_im = preprocess(style_im, shape)
+
+  # generated_im = torch.randn([1, 3, shape[0], shape[1]]).type(tensor_type).requires_grad_(True)
+  generated_im = content_im.clone().requires_grad_(True)
+
+  generated_im.to(device)
+  content_im.to(device)
+  style_im.to(device)
+
+  net = StyleTransferNet()
+  net.to(device)
+  optimizer = torch.optim.LBFGS([generated_im], lr=1)
+  # optimizer = torch.optim.Adam([generated_im])
+
+  content_out = net(content_im)
+  style_out = net(style_im)
+
+  for i in range(500):
+    optimizer.step(closure)
+
+  return generated_im
 
 def main():
 
-    content_im = skio.imread("neckarfront.jpg")
-    style_im = skio.imread("starry_night.jpg")
+	if torch.cuda.is_available():
+	  device = torch.device("cuda")
+	  tensor_type = torch.cuda.FloatTensor
+	else:
+	  device = torch.device("cpu")
+	  tensor_type = torch.FloatTensor
 
-    # Preprocessing of inputs
-    shape = content_im.shape
+	layer_names = ["conv1_1", "conv1_2", 
+	               "conv2_1", "conv2_2", 
+	               "conv3_1", "conv3_2", "conv3_3", "conv3_4", 
+	               "conv4_1", "conv4_2", "conv4_3", "conv4_4", 
+	               "conv5_1", "conv5_2", "conv5_3", "conv5_4"]
 
-    content_im = preprocess(content_im, shape)
-    style_im = preprocess(style_im, shape)
+	# This will allow us to index into the convolutional layer outputs of the network by name, as done in the paper
+	layers = {layer_names[i]: i for i in torch.arange(len(layer_names))}
 
-    generated_im = torch.randn([1, 3, shape[0], shape[1]]).type(tensor_type).requires_grad_(True)
-    # generated_im = content_im.clone().requires_grad_(True)
+	content_layers = ["conv5_2"]
+	style_layers = ["conv1_1", "conv2_1", "conv3_1", "conv4_1", "conv5_1"]
 
-    generated_im.to(device)
-    content_im.to(device)
-    style_im.to(device)
+	layer_weights = [0.2, 0.2, 0.2, 0.2, 0.2]
 
-    net = StyleTransferNet()
-    net.to(device)
-    optimizer = LBFGS([generated_im])
+	# Gatys suggests ratio of 1000:1 or 10000:1
+	content_weight = .1
+	style_weight = 1000
 
-    content_out = net(content_im)
-    style_out = net(style_im)
+	content_im = skio.imread("me.jpg")
+	style_im = skio.imread("starry_night.jpg")
+	generated_im = style_transfer(content_im, style_im)
 
-    def closure():
+	result = generated_im.detach().cpu().squeeze(0).data
+	print_im = result.numpy().T
 
-      optimizer.zero_grad()
-      generated_out = net(generated)
-        
-      # For LBFGS, closure cannot take any arguments, so make this a HOF wrapped by another func
-      # with generated_im, content_out, and style_out defined there
+	skio.imshow(print_im)
 
-      closs = content_loss(content_layers, generated_out, content_out)
-      sloss = style_loss(style_layers, generated_out, style_out, layer_weights)
+	# skio.imsave("result.jpg", result)
+	utils.save_image(result, "result.jpg")
 
-      loss = content_weight * closs + style_weight + sloss
-
-      print("Step %s: %s" % (i, loss.cpu().item()))
-
-      # print(closs, sloss, loss)
-
-      closs.backward(retain_graph=True)
-      sloss.backward(retain_graph=True)
-
-      return loss
-
-    for i in range(500):
-        optimizer.step(closure)
-
-    save_im(generated_im)
+if __name__=="__main__":
+	main()
 
